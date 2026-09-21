@@ -1189,7 +1189,8 @@ class App:
                     os._exit(0)
         except queue.Empty:
             pass
-        self.root.after(15, self.pump)
+        # Poll fast only while something is happening; idle ticks cost CPU for nothing.
+        self.root.after(15 if (self.busy or self.popup.visible) else 50, self.pump)
 
     def run(self):
         self.root.mainloop()
