@@ -1,0 +1,10 @@
+.venv/
+build/
+dist/
+icons/
+__pycache__/
+*.spec
+*.log
+*.b64
+*.gz
+tests/
