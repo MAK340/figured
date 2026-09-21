@@ -3,53 +3,47 @@
 Highlight numbers anywhere in Windows, press a hotkey, and get the maths — sum, subtract,
 multiply, divide, or a formula you build yourself, one operator at a time.
 
-Built for accounting work: it understands `1,250.50`, accounting negatives like `(450)`,
-Arabic-Indic digits (`١٢٣٫٥`), and written calculations like `1,250 × 3 − (400 / 2)`.
+<p align="center"><img src="docs/popup.png" alt="The SumSelect popup: numbers as tags with an operator between each pair" width="620"></p>
 
-![tray icon](icon.png)
+Built for accounting work. It reads `1,250.50`, accounting negatives like `(450)`,
+Arabic-Indic digits (`١٢٣٫٥`), and written calculations like `1,250 × 3 − (400 / 2)`.
 
 ## What it does
 
-* **Hotkey** (default `Ctrl+Alt+S`) — reads whatever is highlighted, in almost any app.
-* **Formula builder** — every number becomes a tag with a clickable operator between each
-  pair. Click to cycle `+ − × ÷`, or use the keyboard. The result updates live and follows
-  normal order of operations (`×` and `÷` before `+` and `−`), so it matches Excel.
-* **Drop a number** — click a tag to exclude it (a stray year, a "VAT 15%" rate, a line number).
-* **Tally** — add results from different documents into one running total, kept across restarts.
-* **Rounding** — full precision, 2 decimals, or 0 decimals, rounded half-up.
-* **History** — the last 10 results in the tray menu; click one to copy it.
-* **Excel export** — `Shift+Enter` copies the calculation as a formula, e.g. `=1250.5+2300*-450+99.75`.
-* **Auto-on-copy** (optional) — any `Ctrl+C` containing two or more numbers pops the result up
-  without stealing focus from what you are typing in.
+**Press `Ctrl+Alt+S`** and every number in your selection becomes a tag, with a clickable
+operator between each pair. Click an operator to cycle `+ − × ÷`; the result updates as you go
+and follows normal order of operations (`×` and `÷` before `+` and `−`), so it agrees with Excel.
+
+- **Drop a number** — click a tag to exclude a stray year, a line number, a "VAT 15%" rate.
+- **Set all** — one click applies the same operator to every gap, for a plain total.
+- **Tally** — add results from different documents into one running total, kept across restarts.
+- **Rounding** — full precision, 2 decimals or 0 decimals, rounded half-up.
+- **History** — the last 10 results sit in the tray menu; click one to copy it.
+- **Excel export** — `Shift+Enter` copies the calculation as a formula, e.g.
+  `=1250.5+2300*-450+99.75`, so the working can be pasted into a sheet.
+- **Auto-on-copy** (optional) — any `Ctrl+C` containing two or more numbers shows the result
+  without taking focus from whatever you are typing in.
+
+It works in browsers, PDF readers, Word, Notepad, ERP screens — anywhere text can be selected.
 
 ## Controls
 
-| Action | Mouse | Keyboard |
+| | Mouse | Keyboard |
 | --- | --- | --- |
-| Change an operator | click it | `←` `→` to pick, `↑` `↓` to cycle, or type `+ - * /` |
-| Drop / restore a number | click the tag | — |
+| Change an operator | click it | `←` `→` to pick, `↑` `↓` to cycle, or type `+` `-` `*` `/` |
+| Drop or restore a number | click the tag | — |
 | Copy the result | click the result | `Enter` |
 | Copy as an Excel formula | — | `Shift+Enter` |
 | Add to tally | "+ Add to tally" | `T` |
 | Close | — | `Esc` |
 
-`Set all: + − × ÷` applies one operator to every gap in one click.
-
-## Why it is light
-
-Measured on a 16-core laptop: **~16 MB** resident, **~0.05 % CPU** idle, **~140 ms of CPU**
-per calculation.
-
-* Win32 `RegisterHotKey` instead of a global keyboard hook, so it costs nothing while you type.
-* Reads the selection through **UI Automation** first — no clipboard round-trip. It falls back
-  to a synthetic `Ctrl+C` only when an app does not expose its selection, and restores whatever
-  was on your clipboard afterwards.
-* `AddClipboardFormatListener` for auto-on-copy: event driven, no polling.
-* One popup window, reused and re-rendered rather than recreated.
-
 ## Install
 
-Requires Windows and Python 3.12+.
+Download the zip from [Releases](../../releases), unblock it (right-click → Properties →
+Unblock if Windows marks it), extract anywhere, and run `SumSelect.exe`. It lives in the
+system tray; enable **Start with Windows** from its menu.
+
+To build from source instead — Windows, Python 3.12+:
 
 ```powershell
 git clone https://github.com/MAK340/sumselect.git
@@ -61,22 +55,41 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 `build.ps1` pre-generates the UI Automation COM wrapper, runs the self-test, builds a
 one-folder PyInstaller bundle, installs it to `%LOCALAPPDATA%\SumSelect\app`, registers it to
-start with Windows, and launches it.
+start with Windows and launches it.
 
-To run from source without building: `.\.venv\Scripts\pythonw.exe sumselect.py`
+Run from source without building: `.\.venv\Scripts\pythonw.exe sumselect.py`
+
+## Footprint
+
+Measured on a 16-core laptop:
+
+| | |
+| --- | --- |
+| RAM | ~16 MB resident (28 MB private) |
+| CPU, idle | 0.02% — about 3 ms per second |
+| CPU, per calculation | ~140 ms |
+
+It stays out of the way by design:
+
+- **Win32 `RegisterHotKey`** rather than a global keyboard hook, so it costs nothing while you type.
+- **UI Automation** reads the selection directly — no clipboard round-trip. It falls back to a
+  synthetic `Ctrl+C` only when an app will not hand over its selection, then puts your clipboard
+  back as it was.
+- **`AddClipboardFormatListener`** for auto-on-copy: event driven, never polling.
+- One popup window, reused rather than recreated, and the internal timer slows down when idle.
 
 ## Settings
 
-`%APPDATA%\SumSelect\config.json` — hotkey, popup seconds, rounding, auto-on-copy, tally and
-history. Edit it, then use **Reload settings** in the tray menu. The file is read as UTF-8
-with or without a byte-order mark, so editing it in Notepad is safe.
+`%APPDATA%\SumSelect\config.json`. Edit it, then choose **Reload settings** in the tray menu.
+The file is read with or without a byte-order mark, so editing it in Notepad is safe.
 
 ```json
 { "hotkey": "ctrl+alt+s", "auto_copy": false, "popup_seconds": 6, "decimals": null }
 ```
 
-Hotkey syntax: modifiers `ctrl` `alt` `shift` `win` plus a letter, digit, `f1`–`f24`, or a
-named key. If the combination is already taken by another app, the tray icon says so.
+`decimals` is `null`, `0` or `2`. Hotkey syntax is modifiers (`ctrl` `alt` `shift` `win`) plus a
+letter, digit, `f1`–`f24` or a named key. If the combination is already taken by another
+program, the tray icon tells you.
 
 ## Tests
 
@@ -84,19 +97,26 @@ named key. If the combination is already taken by another app, the tray icon say
 .\.venv\Scripts\python.exe sumselect.py --test
 ```
 
-Runs the number parser, the operator seeding, the precedence evaluator and the formatters
-over a set of awkward inputs (accounting negatives, Arabic-Indic digits, dates, division by
-zero, thousands separators).
+Covers the number parser, operator seeding, the precedence evaluator and the formatters against
+awkward input: accounting negatives, Arabic-Indic digits, dates, thousands separators, division
+by zero.
 
-## The icon
+## Notes
 
-Generated locally with ComfyUI (Qwen-Image) for the tile, with the Σ composited on top in
-code — image models draw letters unreliably, and the glyph has to stay crisp at 16 px.
-`comfy_icon.py` and `compose_icon.py` reproduce it; `build.ps1` bakes the result into the exe.
+**Dates.** `2026-09-19` is read as three numbers joined by `+`, not as a subtraction — a hyphen
+between digits only counts as an operator when the whole selection reads as a calculation.
 
-## Layout
+**Brackets.** The builder applies `×` and `÷` before `+` and `−` but has no grouping of its own.
+When brackets in the original text change the answer, the popup shows that result too, labelled
+*as written*.
 
-| File | |
+**The icon** was generated locally with ComfyUI (Qwen-Image) for the tile, with the Σ composited
+on top in code — image models draw letters unreliably and the glyph has to stay crisp at 16 px.
+`comfy_icon.py` and `compose_icon.py` reproduce it.
+
+## Files
+
+| | |
 | --- | --- |
 | `sumselect.py` | the whole app — parser, evaluator, Win32 plumbing, Tk popup, tray |
 | `build.ps1` | build and install |

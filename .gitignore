@@ -8,3 +8,4 @@ __pycache__/
 *.b64
 *.gz
 tests/
+RELEASE_NOTES.md
