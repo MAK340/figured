@@ -1,4 +1,7 @@
-"""SumSelect v2 - highlight numbers anywhere on Windows, get Sum / - / x / / instantly.
+"""SumSelect - highlight numbers anywhere on Windows and build the calculation you want.
+
+Every number in the selection becomes a tag with an operator between each pair, so you can
+mix + - x / in one go rather than applying a single operation to everything.
 
 Speed design:
   * Win32 RegisterHotKey (no global keyboard hook -> zero typing overhead)
@@ -6,7 +9,8 @@ Speed design:
     falls back to a synthetic Ctrl+C only when the app doesn't expose its selection
   * AddClipboardFormatListener for auto-on-copy (event driven, no polling)
   * One persistent popup window, shown without stealing focus in auto mode
-Features: tally across selections, tick/untick individual numbers, rounding, history.
+Features: per-pair operators, tally across selections, drop individual numbers, rounding,
+history, Excel formula export.
 """
 import ctypes
 import json
@@ -26,6 +30,7 @@ DEFAULT_CFG = {"hotkey": "ctrl+alt+s", "auto_copy": False, "popup_seconds": 6,
                "decimals": None, "history": [], "tally": []}
 
 # ======================================================================== parsing
+# non-ASCII digits and symbols normalise to their plain equivalents
 _TRANS = {ord(a): str(i) for i, a in enumerate("٠١٢٣٤٥٦٧٨٩")}
 _TRANS.update({ord(a): str(i) for i, a in enumerate("۰۱۲۳۴۵۶۷۸۹")})
 _TRANS.update({ord("٫"): ".", ord("٬"): ",", ord("−"): "-", ord("–"): "-", ord("—"): "-",
@@ -270,7 +275,7 @@ def parse_hotkey(spec):
 
 
 if "--test" in sys.argv:
-    cases = ["1,250.50\n(300)\n-49.5", "Total SAR 1,000 and 2,500.75 (Q3 2025)",
+    cases = ["1,250.50\n(300)\n-49.5", "Total 1,000 and 2,500.75 (Q3 2025)",
              "1,250 \u00d7 3 \u2212 (400 / 2)", "\u0661\u0662\u0663\u066b\u0665 + \u0666", "100 / 8",
              "2026-09-19", "5 / 0", "nothing", "100 + 50 * 2", "12 x 4", "1500 2750.25 (250.25) 600"]
     for c in cases:

@@ -1,30 +1,35 @@
 # SumSelect
 
-Highlight numbers anywhere in Windows, press a hotkey, and get the maths — sum, subtract,
-multiply, divide, or a formula you build yourself, one operator at a time.
+Highlight numbers anywhere in Windows, press a hotkey, and build the calculation you want —
+not just a total.
 
 <p align="center"><img src="docs/popup.png" alt="The SumSelect popup: numbers as tags with an operator between each pair" width="620"></p>
 
-Built for accounting work. It reads `1,250.50`, accounting negatives like `(450)`,
-Arabic-Indic digits (`١٢٣٫٥`), and written calculations like `1,250 × 3 − (400 / 2)`.
+Most "sum selected numbers" tools apply one operation to everything. SumSelect turns each
+number into a tag with a **clickable operator between each pair**, so you can mix `+ − × ÷`
+in a single go and watch the result change as you do.
 
 ## What it does
 
-**Press `Ctrl+Alt+S`** and every number in your selection becomes a tag, with a clickable
-operator between each pair. Click an operator to cycle `+ − × ÷`; the result updates as you go
-and follows normal order of operations (`×` and `÷` before `+` and `−`), so it agrees with Excel.
+Press **`Ctrl+Alt+S`** and your selection becomes a formula you can edit:
 
-- **Drop a number** — click a tag to exclude a stray year, a line number, a "VAT 15%" rate.
-- **Set all** — one click applies the same operator to every gap, for a plain total.
-- **Tally** — add results from different documents into one running total, kept across restarts.
+- **Change any operator** — click it to cycle `+ − × ÷`, or use the keyboard. The result
+  updates live and follows normal order of operations (`×` and `÷` before `+` and `−`), so it
+  agrees with Excel.
+- **Drop a number** — click a tag to leave out something that isn't part of the sum: a year, a
+  line number, a percentage.
+- **Set all** — one click applies the same operator everywhere, for a plain total.
+- **Tally** — collect results from different windows into one running total, kept across restarts.
 - **Rounding** — full precision, 2 decimals or 0 decimals, rounded half-up.
 - **History** — the last 10 results sit in the tray menu; click one to copy it.
-- **Excel export** — `Shift+Enter` copies the calculation as a formula, e.g.
-  `=1250.5+2300*-450+99.75`, so the working can be pasted into a sheet.
+- **Excel export** — `Shift+Enter` copies the working as a formula, e.g.
+  `=1250.5+2300*-450+99.75`, ready to paste into a sheet.
 - **Auto-on-copy** (optional) — any `Ctrl+C` containing two or more numbers shows the result
-  without taking focus from whatever you are typing in.
+  without taking focus from whatever you're typing in.
 
-It works in browsers, PDF readers, Word, Notepad, ERP screens — anywhere text can be selected.
+It reads numbers the way they actually appear in documents: thousands separators (`1,250.50`),
+brackets as negatives (`(450)` → −450), leading signs, and non-ASCII digit forms. It works in
+browsers, PDF readers, Word, Notepad, spreadsheets, terminals — anywhere text can be selected.
 
 ## Controls
 
@@ -40,8 +45,8 @@ It works in browsers, PDF readers, Word, Notepad, ERP screens — anywhere text 
 ## Install
 
 Download the zip from [Releases](../../releases), unblock it (right-click → Properties →
-Unblock if Windows marks it), extract anywhere, and run `SumSelect.exe`. It lives in the
-system tray; enable **Start with Windows** from its menu.
+Unblock if Windows marks it), extract anywhere, and run `SumSelect.exe`. It lives in the system
+tray; turn on **Start with Windows** from its menu.
 
 To build from source instead — Windows, Python 3.12+:
 
@@ -53,9 +58,9 @@ python -m venv .venv
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-`build.ps1` pre-generates the UI Automation COM wrapper, runs the self-test, builds a
-one-folder PyInstaller bundle, installs it to `%LOCALAPPDATA%\SumSelect\app`, registers it to
-start with Windows and launches it.
+`build.ps1` pre-generates the UI Automation COM wrapper, runs the self-test, builds a one-folder
+PyInstaller bundle, installs it to `%LOCALAPPDATA%\SumSelect\app`, registers it to start with
+Windows and launches it.
 
 Run from source without building: `.\.venv\Scripts\pythonw.exe sumselect.py`
 
@@ -68,12 +73,13 @@ Measured on a 16-core laptop:
 | RAM | ~16 MB resident (28 MB private) |
 | CPU, idle | 0.02% — about 3 ms per second |
 | CPU, per calculation | ~140 ms |
+| Cold start | ~1 s |
 
 It stays out of the way by design:
 
 - **Win32 `RegisterHotKey`** rather than a global keyboard hook, so it costs nothing while you type.
 - **UI Automation** reads the selection directly — no clipboard round-trip. It falls back to a
-  synthetic `Ctrl+C` only when an app will not hand over its selection, then puts your clipboard
+  synthetic `Ctrl+C` only when an app won't hand over its selection, then puts your clipboard
   back as it was.
 - **`AddClipboardFormatListener`** for auto-on-copy: event driven, never polling.
 - One popup window, reused rather than recreated, and the internal timer slows down when idle.
@@ -98,8 +104,8 @@ program, the tray icon tells you.
 ```
 
 Covers the number parser, operator seeding, the precedence evaluator and the formatters against
-awkward input: accounting negatives, Arabic-Indic digits, dates, thousands separators, division
-by zero.
+awkward input: bracketed negatives, alternative digit forms, dates, thousands separators,
+division by zero.
 
 ## Notes
 
