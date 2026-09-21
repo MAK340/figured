@@ -690,6 +690,7 @@ class Popup:
         self._tick_id = None
         self.size = (0, 0)
         self.pinned = False
+        self._drag = None
         self.nums, self.ops, self.included, self.sel = [], [], [], 0
         self.gid, self.groups = [], []
 
@@ -814,11 +815,18 @@ class Popup:
         self.hint.pack(anchor="w", pady=(5, 0))
 
     def _header(self):
-        h = tk.Frame(self.body, bg=BG)
+        h = tk.Frame(self.body, bg=BG, cursor="fleur")
         h.pack(anchor="w", fill="x", pady=(0, 6))
-        tk.Label(h, text="\u25cf pinned", bg=BG, fg=ACCENT, font=self.f_hint).pack(side="left")
-        tk.Label(h, text="press the hotkey in another window to add its numbers",
-                 bg=BG, fg=DIM, font=self.f_hint).pack(side="left", padx=(8, 0))
+        tag = tk.Label(h, text="\u25cf pinned", bg=BG, fg=ACCENT, font=self.f_hint, cursor="fleur")
+        tag.pack(side="left")
+        tip = tk.Label(h, text="drag to move \u00b7 hotkey in another window adds its numbers",
+                       bg=BG, fg=DIM, font=self.f_hint, cursor="fleur")
+        tip.pack(side="left", padx=(8, 0))
+        # Dragging the header is the only way to move a window with no title bar.
+        for w in (h, tag, tip):
+            w.bind("<Button-1>", self._drag_start)
+            w.bind("<B1-Motion>", self._drag_move)
+            w.bind("<ButtonRelease-1>", lambda e: setattr(self, "_drag", None))
         for text, fn in (("\u00d7", lambda e: self.hide(restore_focus=True)),
                          ("unpin", lambda e: self.set_pinned(False)),
                          ("keys", lambda e: self.focus_now())):
@@ -907,6 +915,21 @@ class Popup:
         if self.focused_mode and self.visible:
             for d in (1, 40, 120):
                 self.win.after(d, self._refocus)
+
+    def _drag_start(self, e):
+        self._drag = (e.x_root, e.y_root, self.pos[0], self.pos[1])
+
+    def _drag_move(self, e):
+        """Move the popup under the cursor, clamped to the screen it is on."""
+        if not self._drag:
+            return
+        sx, sy, ox, oy = self._drag
+        ww, wh = self.size
+        sw, sh = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
+        x = min(max(0, ox + e.x_root - sx), max(0, sw - ww))
+        y = min(max(0, oy + e.y_root - sy), max(0, sh - wh))
+        self.pos = (x, y)
+        u32.SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, ww, wh, SWP_NOACTIVATE)
 
     def _set_noactivate(self, on):
         ex = u32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
