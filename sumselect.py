@@ -526,6 +526,16 @@ class SelectionReader:
 
 
 # ---------------------------------------------------------------- config / autostart
+def log_error(where, exc):
+    """Quietly record a failure that would otherwise vanish, for later diagnosis."""
+    try:
+        os.makedirs(CFG_DIR, exist_ok=True)
+        with open(os.path.join(CFG_DIR, "error.log"), "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {where}: {exc!r}\n")
+    except Exception:
+        pass
+
+
 def load_cfg():
     cfg = json.loads(json.dumps(DEFAULT_CFG))
     try:
@@ -999,9 +1009,12 @@ class App:
         save_cfg(self.cfg)
         try:
             self.icon.title = self.tooltip()
+            # Rebuild the menu object itself: updating in place leaves the tray menu
+            # showing whatever the history and tally were when the app started.
+            self.icon.menu = self.menu()
             self.icon.update_menu()
-        except Exception:
-            pass
+        except Exception as e:
+            log_error("menu refresh", e)
 
     def copy_text(self, s):
         self.ignore_until = time.time() + 0.5
