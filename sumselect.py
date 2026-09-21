@@ -9,8 +9,10 @@ Speed design:
     falls back to a synthetic Ctrl+C only when the app doesn't expose its selection
   * AddClipboardFormatListener for auto-on-copy (event driven, no polling)
   * One persistent popup window, shown without stealing focus in auto mode
-Features: per-pair operators, tally across selections, drop individual numbers, rounding,
-history, Excel formula export.
+Pin the popup and it stops timing out and stops taking focus, so you can select in a
+second window and press the hotkey again to add those numbers to the same formula.
+Features: per-pair operators, multi-window selections, tally, drop individual numbers,
+rounding, history, Excel formula export.
 """
 import ctypes
 import json
@@ -215,6 +217,27 @@ def evaluate(expr):
     return v
 
 
+def merge(nums, ops, gid, nums2, ops2, g2, join="+"):
+    """Join a second selection onto the current formula with one operator at the seam."""
+    if not nums2:
+        return list(nums), list(ops), list(gid)
+    if not nums:
+        return list(nums2), list(ops2), [g2] * len(nums2)
+    return (list(nums) + list(nums2),
+            list(ops) + [join] + list(ops2),
+            list(gid) + [g2] * len(nums2))
+
+
+def drop(nums, ops, included, gid, g):
+    """Remove every number that came from group g, keeping the operator slots aligned."""
+    keep = [i for i in range(len(nums)) if gid[i] != g]
+    ops2 = [ops[a] for a, b in zip(keep, keep[1:])]
+    left = sorted({gid[i] for i in keep})
+    remap = {o: k for k, o in enumerate(left)}
+    return ([nums[i] for i in keep], ops2, [included[i] for i in keep],
+            [remap[gid[i]] for i in keep], left)
+
+
 def analyze(raw):
     text = normalize(raw or "")
     nums = extract_numbers(text)
@@ -289,7 +312,20 @@ if "--test" in sys.argv:
     assert build(v, ["-", "/"]) == 75 and build(v, ["/", "/"]) == 1
     assert build([Decimal(5), Decimal(0)], ["/"]) is None
     assert build([Decimal("1250.5")], []) == Decimal("1250.5")
-    print("build() assertions ok")
+    n1 = [(Decimal(1), "1", 0, 1), (Decimal(2), "2", 0, 1)]
+    n2 = [(Decimal(3), "3", 0, 1)]
+    m, o, g = merge(n1, ["+"], [0, 0], n2, [], 1)
+    assert len(o) == len(m) - 1 == 2 and o == ["+", "+"] and g == [0, 0, 1]
+    assert build([x[0] for x in m], o) == 6
+    o[1] = "-"
+    assert build([x[0] for x in m], o) == 0
+    assert merge([], [], [], n2, [], 0) == (n2, [], [0])
+    assert merge(n1, ["+"], [0, 0], [], [], 1) == (n1, ["+"], [0, 0])
+    m2, o2, inc2, g2, left = drop(m, o, [True] * 3, g, 0)
+    assert [x[1] for x in m2] == ["3"] and o2 == [] and g2 == [0] and left == [1]
+    m3, o3, _, g3, left3 = drop(m, o, [True] * 3, g, 1)
+    assert [x[1] for x in m3] == ["1", "2"] and o3 == ["+"] and g3 == [0, 0] and left3 == [0]
+    print("build()/merge()/drop() assertions ok")
     sys.exit(0)
 
 # ======================================================================== Windows
@@ -450,6 +486,24 @@ u32.BringWindowToTop.argtypes = [wintypes.HWND]
 u32.SetFocus.argtypes = [wintypes.HWND]
 
 
+def fg_title():
+    """Short name of the window a selection came from, used to label its group."""
+    try:
+        hwnd = u32.GetForegroundWindow()
+        if not hwnd:
+            return ""
+        length = u32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(length + 1)
+        u32.GetWindowTextW(hwnd, buf, length + 1)
+        t = buf.value.strip()
+        for sep in (" - ", " \u2013 ", " \u2014 ", " | "):
+            if sep in t:
+                t = t.split(sep)[0].strip()
+        return t[:22]
+    except Exception:
+        return ""
+
+
 def force_foreground(hwnd):
     """Windows only lets the foreground thread hand over focus, so borrow its input queue."""
     fg = u32.GetForegroundWindow()
@@ -591,6 +645,9 @@ def set_autostart(on):
 BG, FG, MUTED, DIM, ACCENT, TAB_BG, BORDER = ("#1f2329", "#f2f4f7", "#9aa3ad", "#6b737d",
                                               "#4cc38a", "#2c323a", "#3a414b")
 CHIP_ON, CHIP_OFF = ("#2f3b35", "#262a30")
+# Numbers keep the tint of the window they came from, so two sources stay tellable apart.
+GROUP_TINTS = ("#2f3b35", "#2b3444", "#3a3529", "#342b3d")
+GROUP_DOTS = ("#4cc38a", "#7aa2f7", "#d7a45c", "#b48ce0")
 MAX_CHIPS = 60
 OP_SYM = {"+": "+", "-": "\u2212", "*": "\u00d7", "/": "\u00f7"}
 OP_CYCLE = ["+", "-", "*", "/"]
@@ -632,19 +689,55 @@ class Popup:
         self.deadline = 0
         self._tick_id = None
         self.size = (0, 0)
+        self.pinned = False
         self.nums, self.ops, self.included, self.sel = [], [], [], 0
+        self.gid, self.groups = [], []
 
     # ---------------------------------------------------------------- state
-    def show(self, nums, ops, expr_val, focus):
+    def show(self, nums, ops, expr_val, focus, label=""):
         self.nums = nums
         self.ops = list(ops)
         self.included = [True] * len(nums)
+        self.gid = [0] * len(nums)
+        self.groups = [label] if nums else []
         self.expr_val = expr_val
         self.sel = 0
         self.hover = False
         self.size = (0, 0)
         self.render()
         self.present(focus)
+
+    def append(self, nums, ops, label=""):
+        """Add another window's selection to the end of the formula, joined with '+'."""
+        if not nums:
+            self.bump()
+            if getattr(self, "hint", None):
+                self.hint.configure(text="nothing to add \u2014 no numbers in that selection")
+            return
+        if len(self.nums) + len(nums) > MAX_CHIPS:
+            nums = nums[:max(0, MAX_CHIPS - len(self.nums))]
+            ops = ops[:max(0, len(nums) - 1)]
+            if not nums:
+                return
+        seam = len(self.nums) - 1
+        g = len(self.groups)
+        self.nums, self.ops, self.gid = merge(self.nums, self.ops, self.gid, nums, ops, g)
+        self.included += [True] * len(nums)
+        self.groups.append(label)
+        # "as written" only describes one document, so it stops meaning anything here.
+        self.expr_val = None
+        slots = self.op_slots()
+        self.sel = slots.index(seam) if seam in slots else 0
+        self.refresh()
+
+    def drop_group(self, g):
+        nums, ops, inc, gid, left = drop(self.nums, self.ops, self.included, self.gid, g)
+        if not nums:
+            return self.hide(restore_focus=True)
+        labels = [self.groups[i] for i in left]
+        self.nums, self.ops, self.included, self.gid, self.groups = nums, ops, inc, gid, labels
+        self.sel = 0
+        self.refresh()
 
     def live(self):
         """Included (value, src) pairs and the operators that join them."""
@@ -669,13 +762,18 @@ class Popup:
             c.destroy()
         dec = self.app.cfg.get("decimals")
         if not self.nums:
+            if self.pinned:
+                self._header()
             tk.Label(self.body, text="No numbers found", bg=BG, fg=FG, font=("Segoe UI", 12)).pack()
             self._tally_row(dec)
             self.hint = tk.Label(self.body, text="Esc to close", bg=BG, fg=DIM, font=self.f_hint)
             self.hint.pack(anchor="w", pady=(4, 0))
             return
 
+        if self.pinned:
+            self._header()
         self._formula_row()
+        self._legend()
         total = self.result()
         self.value = tk.Label(self.body, text=fmt(total, dec) if total is not None else "\u2014",
                               bg=BG, fg=FG, cursor="hand2", font=self.f_big)
@@ -702,12 +800,49 @@ class Popup:
                          font=self.f_op, cursor="hand2")
             b.pack(side="left", padx=(0, 3))
             b.bind("<Button-1>", lambda e, op=op: self.set_all(op))
+        if not self.pinned:
+            pin = tk.Label(setall, text="Pin", bg=TAB_BG, fg=MUTED, padx=6, pady=1,
+                           font=self.f_hint, cursor="hand2")
+            pin.pack(side="left", padx=(12, 0))
+            pin.bind("<Button-1>", lambda e: self.set_pinned(True))
         self._tally_row(dec, parent=setall)
         self.hint = tk.Label(self.body, text="click an operator or a number \u00b7 \u2190\u2192 pick \u00b7 "
                                              "\u2191\u2193 cycle + \u2212 \u00d7 \u00f7 \u00b7 "
-                                             "Enter copy \u00b7 Shift+Enter Excel \u00b7 Esc",
+                                             "Enter copy \u00b7 Shift+Enter Excel \u00b7 "
+                                             "P pin \u00b7 Esc",
                              bg=BG, fg=DIM, font=self.f_hint)
         self.hint.pack(anchor="w", pady=(5, 0))
+
+    def _header(self):
+        h = tk.Frame(self.body, bg=BG)
+        h.pack(anchor="w", fill="x", pady=(0, 6))
+        tk.Label(h, text="\u25cf pinned", bg=BG, fg=ACCENT, font=self.f_hint).pack(side="left")
+        tk.Label(h, text="press the hotkey in another window to add its numbers",
+                 bg=BG, fg=DIM, font=self.f_hint).pack(side="left", padx=(8, 0))
+        for text, fn in (("\u00d7", lambda e: self.hide(restore_focus=True)),
+                         ("unpin", lambda e: self.set_pinned(False)),
+                         ("keys", lambda e: self.focus_now())):
+            b = tk.Label(h, text=text, bg=TAB_BG, fg=MUTED, padx=6, pady=1,
+                         font=self.f_hint, cursor="hand2")
+            b.pack(side="right", padx=(4, 0))
+            b.bind("<Button-1>", fn)
+
+    def _legend(self):
+        """Name each source window once, with a way to drop everything it contributed."""
+        if len(self.groups) < 2:
+            return
+        row = tk.Frame(self.body, bg=BG)
+        row.pack(anchor="w", pady=(5, 0))
+        for g, name in enumerate(self.groups):
+            cell = tk.Frame(row, bg=BG)
+            cell.pack(side="left", padx=(0, 12))
+            tk.Label(cell, text="\u25cf", bg=BG, fg=GROUP_DOTS[g % len(GROUP_DOTS)],
+                     font=self.f_hint).pack(side="left")
+            tk.Label(cell, text=name or f"selection {g + 1}", bg=BG, fg=MUTED,
+                     font=self.f_hint).pack(side="left", padx=(3, 0))
+            x = tk.Label(cell, text="\u00d7", bg=BG, fg=DIM, font=self.f_hint, cursor="hand2")
+            x.pack(side="left", padx=(4, 0))
+            x.bind("<Button-1>", lambda e, g=g: self.drop_group(g))
 
     def _formula_row(self):
         wrap = tk.Frame(self.body, bg=BG)
@@ -728,7 +863,9 @@ class Popup:
             if width + w_px > max_w:
                 row, width = new_row(), 0
             on = self.included[i]
-            c = tk.Label(row, text=src, bg=CHIP_ON if on else CHIP_OFF, fg=FG if on else DIM,
+            g = self.gid[i] if i < len(self.gid) else 0
+            tint = GROUP_TINTS[g % len(GROUP_TINTS)] if len(self.groups) > 1 else CHIP_ON
+            c = tk.Label(row, text=src, bg=tint if on else CHIP_OFF, fg=FG if on else DIM,
                          font=self.f_chip if on else self.f_chip_off, padx=6, pady=2, cursor="hand2")
             c.pack(side="left")
             c.bind("<Button-1>", lambda e, i=i: self.toggle(i))
@@ -770,6 +907,40 @@ class Popup:
         if self.focused_mode and self.visible:
             for d in (1, 40, 120):
                 self.win.after(d, self._refocus)
+
+    def _set_noactivate(self, on):
+        ex = u32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
+        ex = (ex | WS_EX_NOACTIVATE) if on else (ex & ~WS_EX_NOACTIVATE)
+        u32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex)
+
+    def set_pinned(self, on):
+        """Pinned, the popup never times out and never takes focus, so you can go
+        select in another window and press the hotkey again to add those numbers."""
+        self.pinned = on
+        if on:
+            self.blur()
+        else:
+            self.bump()
+            self.refresh()
+
+    def focus_now(self):
+        """Hand the popup the keyboard for a moment; it gives focus back on Esc."""
+        if not self.visible:
+            return
+        self.prev_fg = u32.GetForegroundWindow()
+        self._set_noactivate(False)
+        self.focused_mode = True
+        force_foreground(self.hwnd)
+        self.win.focus_force()
+        self.refresh()
+
+    def blur(self):
+        """Step out of the way: no focus, no timeout, still on screen."""
+        self.focused_mode = False
+        self._set_noactivate(True)
+        if self.prev_fg:
+            u32.SetForegroundWindow(self.prev_fg)
+        self.refresh()
 
     def _refocus(self):
         if self.visible and u32.GetForegroundWindow() != self.hwnd:
@@ -820,6 +991,9 @@ class Popup:
     def on_key(self, e):
         k, ch = e.keysym, e.char
         if k == "Escape":
+            # While pinned, Esc only gives the keyboard back; the x button closes.
+            if self.pinned:
+                return self.blur()
             return self.hide(restore_focus=True)
         if k == "Left":
             return self.move(-1)
@@ -843,6 +1017,8 @@ class Popup:
             return self.set_op("/")
         if k.lower() == "t":
             return self.add_tally()
+        if k.lower() == "p":
+            return self.set_pinned(not self.pinned)
 
     def copy(self, excel=False):
         vals, srcs, ops, _ = self.live()
@@ -911,10 +1087,9 @@ class Popup:
         u32.SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, ww, wh, SWP_NOACTIVATE)
 
     def present(self, focus):
+        focus = focus and not self.pinned
         self.focused_mode = focus
-        ex = u32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
-        ex = (ex & ~WS_EX_NOACTIVATE) if focus else (ex | WS_EX_NOACTIVATE)
-        u32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex)
+        self._set_noactivate(not focus)
         self._place()
         self.win.attributes("-alpha", 0.0)
         if focus:
@@ -948,7 +1123,7 @@ class Popup:
             self.bump(1.5)
         if self.focused_mode and u32.GetForegroundWindow() != self.hwnd:
             self._refocus()
-        if time.time() >= self.deadline:
+        if not self.pinned and time.time() >= self.deadline:
             self.hide()
             return
         self._tick_id = self.win.after(200, self._tick)
@@ -957,6 +1132,7 @@ class Popup:
         if not self.visible:
             return
         self.visible = False
+        self.pinned = False
         self.win.attributes("-alpha", 0.0)
         u32.ShowWindow(self.hwnd, SW_HIDE)
         if restore_focus and self.focused_mode and self.prev_fg:
@@ -1121,11 +1297,13 @@ class App:
     def on_clipboard_update(self):
         if not self.cfg["auto_copy"] or self.busy or time.time() < self.ignore_until:
             return
+        adding = self.popup.pinned and self.popup.visible
         text = clip_get()
         if text and len(text) < 50000:
             nums, ops, expr_val = analyze(text)
-            if len(nums) >= 2:
-                self.q.put(("show", nums, ops, expr_val, False))
+            # A single number is worth adding to a formula, but not worth popping up for.
+            if len(nums) >= (1 if adding else 2):
+                self.q.put(("show", nums, ops, expr_val, False, fg_title()))
 
     # ---- selection grab (worker thread)
     def grab_selection(self):
@@ -1133,11 +1311,12 @@ class App:
             return
         self.busy = True
         try:
+            label = fg_title()
             text = self.reader.read()
             if not text or not text.strip():
                 text = self._grab_via_clipboard()
             nums, ops, expr_val = analyze(text or "")
-            self.q.put(("show", nums, ops, expr_val, True))
+            self.q.put(("show", nums, ops, expr_val, True, label))
         finally:
             self.ignore_until = time.time() + 0.3
             self.busy = False
@@ -1168,7 +1347,11 @@ class App:
                 msg = self.q.get_nowait()
                 kind = msg[0]
                 if kind == "show":
-                    self.popup.show(msg[1], msg[2], msg[3], focus=msg[4])
+                    nums, ops, expr_val, focus, label = msg[1], msg[2], msg[3], msg[4], msg[5]
+                    if self.popup.pinned and self.popup.visible:
+                        self.popup.append(nums, ops, label)
+                    else:
+                        self.popup.show(nums, ops, expr_val, focus=focus, label=label)
                 elif kind == "grab":
                     threading.Thread(target=self.grab_selection, daemon=True).start()
                 elif kind == "copy":

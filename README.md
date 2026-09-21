@@ -19,6 +19,10 @@ Press **`Ctrl+Alt+S`** and your selection becomes a formula you can edit:
 - **Drop a number** — click a tag to leave out something that isn't part of the sum: a year, a
   line number, a percentage.
 - **Set all** — one click applies the same operator everywhere, for a plain total.
+- **Two windows, one formula** — **Pin** the popup and it stops timing out and stops
+  taking focus. Select in another window, press the hotkey again, and those numbers join
+  the same formula with their own operator at the seam. Each source gets a colour and a
+  name you can click to remove.
 - **Tally** — collect results from different windows into one running total, kept across restarts.
 - **Rounding** — full precision, 2 decimals or 0 decimals, rounded half-up.
 - **History** — the last 10 results sit in the tray menu; click one to copy it.
@@ -40,6 +44,7 @@ browsers, PDF readers, Word, Notepad, spreadsheets, terminals — anywhere text 
 | Copy the result | click the result | `Enter` |
 | Copy as an Excel formula | — | `Shift+Enter` |
 | Add to tally | "+ Add to tally" | `T` |
+| Pin for a second window | "Pin" | `P` |
 | Close | — | `Esc` |
 
 ## Install
