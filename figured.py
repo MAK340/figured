@@ -1,4 +1,4 @@
-"""SumSelect - highlight numbers anywhere on Windows and build the calculation you want.
+"""Figured - highlight numbers anywhere on Windows and build the calculation you want.
 
 Every number in the selection becomes a tag with an operator between each pair, so you can
 mix + - x / in one go rather than applying a single operation to everything.
@@ -25,11 +25,14 @@ import time
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, getcontext
 
 getcontext().prec = 34
-APP = "SumSelect"
+APP = "Figured"
+VERSION = "1.1.0"
+REPO = "MAK340/figured"
+LEGACY_APP = "SumSelect"  # the name before v1.1.0
 CFG_DIR = os.path.join(os.environ.get("APPDATA", "."), APP)
 CFG_PATH = os.path.join(CFG_DIR, "config.json")
 DEFAULT_CFG = {"hotkey": "ctrl+alt+s", "auto_copy": False, "popup_seconds": 6,
-               "decimals": None, "history": [], "tally": []}
+               "decimals": None, "history": [], "tally": [], "check_updates": True}
 
 # ======================================================================== parsing
 # non-ASCII digits and symbols normalise to their plain equivalents
@@ -641,6 +644,71 @@ def set_autostart(on):
                 pass
 
 
+
+def migrate_legacy():
+    """Carry settings, history and tally over from the SumSelect days, once."""
+    old_dir = os.path.join(os.environ.get("APPDATA", "."), LEGACY_APP)
+    old_cfg = os.path.join(old_dir, "config.json")
+    if not os.path.exists(CFG_PATH) and os.path.exists(old_cfg):
+        try:
+            os.makedirs(CFG_DIR, exist_ok=True)
+            with open(old_cfg, "rb") as src, open(CFG_PATH, "wb") as dst:
+                dst.write(src.read())
+        except Exception as e:
+            log_error("migrate settings", e)
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
+                            winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as k:
+            try:
+                winreg.QueryValueEx(k, LEGACY_APP)
+            except OSError:
+                return
+            winreg.DeleteValue(k, LEGACY_APP)
+            if getattr(sys, "frozen", False):
+                winreg.SetValueEx(k, APP, 0, winreg.REG_SZ, _exe_cmd())
+    except OSError as e:
+        log_error("migrate autostart", e)
+
+
+# ---------------------------------------------------------------- updates
+def version_tuple(s):
+    return tuple(int(x) for x in re.findall(r"\d+", s or "")[:3])
+
+
+def latest_release():
+    """(tag, installer_url) when GitHub has a newer release than this build, else None."""
+    import urllib.request
+    req = urllib.request.Request(f"https://api.github.com/repos/{REPO}/releases/latest",
+                                 headers={"User-Agent": f"{APP}/{VERSION}",
+                                          "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.load(r)
+    tag = data.get("tag_name", "")
+    if version_tuple(tag) <= version_tuple(VERSION):
+        return None
+    for a in data.get("assets", []):
+        if a.get("name", "").lower().endswith("-setup.exe"):
+            return tag, a["browser_download_url"]
+    return None
+
+
+def download_and_run_installer(url):
+    """Fetch the setup exe to %TEMP% and start it silently; it closes and relaunches us."""
+    import subprocess
+    import tempfile
+    import urllib.request
+    if not url.startswith(f"https://github.com/{REPO}/releases/download/"):
+        raise ValueError("unexpected download location")
+    dest = os.path.join(tempfile.gettempdir(), url.rsplit("/", 1)[-1])
+    req = urllib.request.Request(url, headers={"User-Agent": f"{APP}/{VERSION}"})
+    with urllib.request.urlopen(req, timeout=120) as r, open(dest, "wb") as f:
+        while True:
+            chunk = r.read(1 << 16)
+            if not chunk:
+                break
+            f.write(chunk)
+    subprocess.Popen([dest, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], close_fds=True)
+
 # ---------------------------------------------------------------- popup
 BG, FG, MUTED, DIM, ACCENT, TAB_BG, BORDER = ("#1f2329", "#f2f4f7", "#9aa3ad", "#6b737d",
                                               "#4cc38a", "#2c323a", "#3a414b")
@@ -1177,10 +1245,12 @@ class App:
         self.popup = Popup(self)
         self.reader = SelectionReader()
         self.hotkey_ok = False
+        self.update = None  # (tag, url) once a newer release is found
         self.icon = pystray.Icon(APP, make_icon(), self.tooltip(), menu=self.menu())
         threading.Thread(target=self.icon.run, daemon=True).start()
         threading.Thread(target=self.win32_loop, daemon=True).start()
         self.root.after(15, self.pump)
+        threading.Thread(target=self.update_loop, daemon=True).start()
 
     # ---- state helpers (tk thread)
     def tally_values(self):
@@ -1273,6 +1343,13 @@ class App:
             I("Settings file (change hotkey)", lambda: os.startfile(CFG_PATH)),
             I("Reload settings", lambda: self.q.put(("reload",))),
             M.SEPARATOR,
+            I(lambda item: f"Install update {self.update[0]}" if self.update else "Install update",
+              lambda: self.q.put(("install_update",)), visible=lambda item: bool(self.update)),
+            I(f"Updates  (v{VERSION})", M(
+                I("Check now", lambda: self.q.put(("check_updates",))),
+                I("Check automatically", lambda: self.q.put(("toggle_update_checks",)),
+                  checked=lambda item: self.cfg.get("check_updates", True)),
+            )),
             I("Quit", lambda: self.q.put(("quit",))),
         )
 
@@ -1283,9 +1360,9 @@ class App:
         wc = WNDCLASSW()
         wc.lpfnWndProc = self._wndproc
         wc.hInstance = hinst
-        wc.lpszClassName = "SumSelectMsgWnd"
+        wc.lpszClassName = "FiguredMsgWnd"
         u32.RegisterClassW(ctypes.byref(wc))
-        self.msg_hwnd = u32.CreateWindowExW(0, "SumSelectMsgWnd", APP, 0, 0, 0, 0, 0,
+        self.msg_hwnd = u32.CreateWindowExW(0, "FiguredMsgWnd", APP, 0, 0, 0, 0, 0,
                                             wintypes.HWND(-3), None, hinst, None)
         u32.AddClipboardFormatListener(self.msg_hwnd)
         self._register_hotkey()
@@ -1327,6 +1404,38 @@ class App:
             # A single number is worth adding to a formula, but not worth popping up for.
             if len(nums) >= (1 if adding else 2):
                 self.q.put(("show", nums, ops, expr_val, False, fg_title()))
+
+    # ---- updates (worker threads)
+    def update_loop(self):
+        time.sleep(30)
+        while True:
+            if self.cfg.get("check_updates", True):
+                self.check_updates(manual=False)
+            time.sleep(24 * 3600)
+
+    def check_updates(self, manual):
+        try:
+            found = latest_release()
+        except Exception as e:
+            log_error("update check", e)
+            if manual:
+                self.q.put(("notify", "Couldn't reach GitHub to check for updates."))
+            return
+        if found:
+            self.q.put(("update_found", found))
+        elif manual:
+            self.q.put(("notify", f"You're on the latest version ({VERSION})."))
+
+    def install_update(self):
+        tag, url = self.update
+        self.q.put(("notify", f"Downloading {APP} {tag}..."))
+        try:
+            download_and_run_installer(url)
+        except Exception as e:
+            log_error("update install", e)
+            self.q.put(("notify", "The update couldn't be downloaded. Try again later."))
+            return
+        self.q.put(("quit",))
 
     # ---- selection grab (worker thread)
     def grab_selection(self):
@@ -1402,6 +1511,24 @@ class App:
                     self.cfg.update(keep)
                     u32.PostMessageW(self.msg_hwnd, WM_APP_REHOTKEY, 0, 0)
                     self._changed()
+                elif kind == "update_found":
+                    new = self.update is None or self.update[0] != msg[1][0]
+                    self.update = msg[1]
+                    self._changed()
+                    if new:
+                        try:
+                            self.icon.notify(f"{APP} {self.update[0]} is available. "
+                                             "Choose Install update in the tray menu.", APP)
+                        except Exception:
+                            pass
+                elif kind == "check_updates":
+                    threading.Thread(target=self.check_updates, args=(True,), daemon=True).start()
+                elif kind == "install_update":
+                    if self.update:
+                        threading.Thread(target=self.install_update, daemon=True).start()
+                elif kind == "toggle_update_checks":
+                    self.cfg["check_updates"] = not self.cfg.get("check_updates", True)
+                    self._changed()
                 elif kind == "notify":
                     try:
                         self.icon.notify(msg[1], APP)
@@ -1447,7 +1574,8 @@ if __name__ == "__main__":
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
         pass
-    k32.CreateMutexW(None, False, "Local\\SumSelectSingleton")
+    k32.CreateMutexW(None, False, "Local\\FiguredSingleton")
     if ctypes.get_last_error() == 183:
         sys.exit(0)
+    migrate_legacy()
     App().run()

@@ -9,3 +9,5 @@ __pycache__/
 *.gz
 tests/
 RELEASE_NOTES.md
+*.zip
+*.exe

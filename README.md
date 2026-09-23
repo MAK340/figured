@@ -1,11 +1,11 @@
-# SumSelect
+# Figured
 
 Highlight numbers anywhere in Windows, press a hotkey, and build the calculation you want —
 not just a total.
 
-<p align="center"><img src="docs/popup.png" alt="The SumSelect popup: numbers as tags with an operator between each pair" width="620"></p>
+<p align="center"><img src="docs/popup.png" alt="The Figured popup: numbers as tags with an operator between each pair" width="620"></p>
 
-Most "sum selected numbers" tools apply one operation to everything. SumSelect turns each
+Most "sum selected numbers" tools apply one operation to everything. Figured turns each
 number into a tag with a **clickable operator between each pair**, so you can mix `+ − × ÷`
 in a single go and watch the result change as you do.
 
@@ -49,25 +49,34 @@ browsers, PDF readers, Word, Notepad, spreadsheets, terminals — anywhere text 
 
 ## Install
 
-Download the zip from [Releases](../../releases), unblock it (right-click → Properties →
-Unblock if Windows marks it), extract anywhere, and run `SumSelect.exe`. It lives in the system
-tray; turn on **Start with Windows** from its menu.
+Download `Figured-<version>-setup.exe` from [Releases](../../releases) and run it. It installs
+for your user only (no admin prompt) into `%LOCALAPPDATA%\Programs\Figured`, adds a Start menu
+entry, can start with Windows, and uninstalls cleanly from **Settings → Apps**. The build is
+unsigned, so SmartScreen warns on first run: **More info → Run anyway**.
 
-To build from source instead — Windows, Python 3.12+:
+Prefer no installer? `Figured-<version>-portable.zip` is the same app: extract anywhere and run
+`Figured.exe`.
+
+**Updates.** Figured checks GitHub for a newer release once a day (turn it off under
+**Updates** in the tray menu). When one exists, the tray shows **Install update**; it downloads
+the new setup, closes the app, installs silently and starts it again. Settings, history and
+tally are kept.
+
+**Coming from SumSelect?** Figured is the same app, renamed. Installing it closes and removes
+the old copy and brings your settings, history and tally across on first start.
+
+To build from source instead (Windows, Python 3.12+, [Inno Setup 6](https://jrsoftware.org/isinfo.php)):
 
 ```powershell
-git clone https://github.com/MAK340/sumselect.git
-cd sumselect
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install comtypes pystray pillow pyinstaller
-powershell -ExecutionPolicy Bypass -File .\build.ps1
+git clone https://github.com/MAK340/figured.git
+cd figured
+powershell -ExecutionPolicy Bypass -File .\build.ps1            # add -Install to install it too
 ```
 
-`build.ps1` pre-generates the UI Automation COM wrapper, runs the self-test, builds a one-folder
-PyInstaller bundle, installs it to `%LOCALAPPDATA%\SumSelect\app`, registers it to start with
-Windows and launches it.
+`build.ps1` creates the venv, pre-generates the UI Automation COM wrapper, runs the self-test,
+builds a one-folder PyInstaller bundle, then the installer and the portable zip in `dist\`.
 
-Run from source without building: `.\.venv\Scripts\pythonw.exe sumselect.py`
+Run from source without building: `.\.venv\Scripts\pythonw.exe figured.py`
 
 ## Footprint
 
@@ -91,11 +100,11 @@ It stays out of the way by design:
 
 ## Settings
 
-`%APPDATA%\SumSelect\config.json`. Edit it, then choose **Reload settings** in the tray menu.
+`%APPDATA%\Figured\config.json`. Edit it, then choose **Reload settings** in the tray menu.
 The file is read with or without a byte-order mark, so editing it in Notepad is safe.
 
 ```json
-{ "hotkey": "ctrl+alt+s", "auto_copy": false, "popup_seconds": 6, "decimals": null }
+{ "hotkey": "ctrl+alt+s", "auto_copy": false, "popup_seconds": 6, "decimals": null, "check_updates": true }
 ```
 
 `decimals` is `null`, `0` or `2`. Hotkey syntax is modifiers (`ctrl` `alt` `shift` `win`) plus a
@@ -105,7 +114,7 @@ program, the tray icon tells you.
 ## Tests
 
 ```powershell
-.\.venv\Scripts\python.exe sumselect.py --test
+.\.venv\Scripts\python.exe figured.py --test
 ```
 
 Covers the number parser, operator seeding, the precedence evaluator and the formatters against
@@ -129,8 +138,9 @@ on top in code — image models draw letters unreliably and the glyph has to sta
 
 | | |
 | --- | --- |
-| `sumselect.py` | the whole app — parser, evaluator, Win32 plumbing, Tk popup, tray |
-| `build.ps1` | build and install |
+| `figured.py` | the whole app — parser, evaluator, Win32 plumbing, Tk popup, tray |
+| `build.ps1` | build the app, installer and portable zip |
+| `installer.iss` | Inno Setup script for the installer |
 | `comfy_icon.py`, `compose_icon.py` | icon generation |
 | `icon.png`, `icon.ico` | the generated icon |
 
